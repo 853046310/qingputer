@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Qingputer",
+  "version": "0.1.0",
+  "identifier": "com.qingputer.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg"
+    ],
+    "externalBin": [
+      "../../runtime/dist/qingputer-runtime"
+    ],
+    "resources": {
+      "../../runtime/build/playwright-browsers": "playwright-browsers"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Qingputer",
+        "width": 1520,
+        "height": 960,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

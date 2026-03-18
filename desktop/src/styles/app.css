@@ -1,0 +1,332 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  /* bg-background 用于 Input / Textarea / Select / Dialog 等组件底色，
+     应为 surface 层（白色/深绿），而非 base（页面底色），
+     否则 dark 模式下表单控件与页面背景无法区分 */
+  --color-background: var(--bg-surface);
+  --color-foreground: var(--text-primary);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--bg-overlay);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--bg-raised);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--accent-dim);
+  --color-accent-foreground: var(--accent);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--border);
+  /* border-input 用更柔和的 border-muted，与结构分隔线区分 */
+  --color-input: var(--border-muted);
+  --color-ring: var(--accent);
+  --color-card: var(--bg-surface);
+  --color-card-foreground: var(--text-primary);
+  /* popover（下拉菜单/Select 弹层）用 raised 层，dark 模式下对比度更强 */
+  --color-popover: var(--bg-raised);
+  --color-popover-foreground: var(--text-primary);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+/* ── 亮色主题（默认） ─────────────────────────────────────────────── */
+:root {
+  --bg-base:        #f5f6f7;
+  --bg-surface:     #ffffff;
+  --bg-raised:      #f5f6f7;
+  --bg-overlay:     #ebebec;
+  --border:         #e3e5e6;
+  --border-muted:   #edeeef;
+  --text-primary:   #0f1117;
+  --text-secondary: #4b5563;
+  --text-muted:     #9ca3af;
+  --accent:         #16a34a;
+  --accent-dim:     #f0fdf4;
+  --accent-hover:   #15803d;
+  --warning:        #d97706;
+  --warning-dim:    #fffbeb;
+  --danger:         #dc2626;
+  --danger-dim:     #fef2f2;
+  --critical:       #b91c1c;
+  --critical-dim:   #fef2f2;
+  --term-bg:        #1c1c1e;
+  --term-text:      #a3e8bb;
+  --file:           #3b82f6;
+  --file-dim:       #eff6ff;
+}
+
+/* ── 暗色主题（html.dark） ────────────────────────────────────────── */
+html.dark {
+  --bg-base:        #0d1410;
+  --bg-surface:     #141a16;
+  --bg-raised:      #1b2420;
+  --bg-overlay:     #222c27;
+  --border:         #253029;
+  --border-muted:   #1c2622;
+  --text-primary:   #ddeae0;
+  --text-secondary: #7a9082;
+  --text-muted:     #4d6357;
+  --accent:         #2ec47a;
+  --accent-dim:     #162e20;
+  --accent-hover:   #25a367;
+  --warning:        #e8a428;
+  --warning-dim:    #2d1f06;
+  --danger:         #e05252;
+  --danger-dim:     #2a1010;
+  --critical:       #c93030;
+  --critical-dim:   #220a0a;
+  --term-bg:        #080e0b;
+  --term-text:      #b8f0c8;
+  --file:           #60a5fa;
+  --file-dim:       #0d1f33;
+}
+
+* { box-sizing: border-box; }
+
+/* shadcn/ui グローバルベース: Tailwind v4 では border ユーティリティが
+   border-width のみ設定するため、color を明示的にテーマ変数で統一する。
+   これがないと border class 適用時に currentColor（ほぼ黒）になる。 */
+*, ::before, ::after { border-color: var(--color-border); }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif;
+  font-size: 14px;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+pre, code, .font-mono {
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+  font-size: 13px;
+}
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+
+/* 放入 @layer base，使 Tailwind utilities（@layer utilities）可正确覆盖这些重置。
+   若放在 unlayered 区域，无层样式优先级高于所有 @layer，会导致 bg-primary 等
+   背景工具类被 background:none 覆盖（按钮透明白字）。 */
+@layer base {
+  button {
+    cursor: pointer; border: none; background: none; font: inherit;
+    transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease, border-color 0.12s ease;
+  }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  input, textarea, select { font-family: inherit; }
+}
+
+/* ── Markdown prose ───────────────────────────────────────────── */
+.prose {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.prose > *:first-child { margin-top: 0 !important; }
+.prose > *:last-child  { margin-bottom: 0 !important; }
+
+/* Paragraphs */
+.prose p { margin: 0 0 0.75em; }
+.prose p:last-child { margin-bottom: 0; }
+
+/* Headings — Tailwind preflight resets font-size & weight to normal, restore them */
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.2em 0 0.45em;
+  color: var(--text-primary);
+}
+.prose h1 { font-size: 1.35em; }
+.prose h2 { font-size: 1.2em;  border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+.prose h3 { font-size: 1.08em; }
+.prose h4 { font-size: 1em; }
+
+/* Lists — Tailwind preflight sets list-style:none and padding:0, restore them */
+.prose ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.prose ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.prose li {
+  display: list-item;
+  margin: 0.25em 0;
+}
+.prose li > ul { list-style-type: circle; margin: 0.15em 0; }
+.prose li > ol { margin: 0.15em 0; }
+.prose li > ul > li > ul { list-style-type: square; }
+
+/* Task list checkboxes (GFM) */
+.prose input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: middle;
+  accent-color: var(--accent);
+}
+
+/* Inline code */
+.prose code:not(pre code) {
+  background: var(--bg-overlay);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 0.12em 0.4em;
+  font-size: 0.87em;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+}
+
+/* Code blocks */
+.prose pre {
+  background: var(--term-bg) !important;
+  border-radius: 8px;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+.prose pre code {
+  background: transparent !important;
+  padding: 0.85em 1em;
+  font-size: 12px;
+  line-height: 1.6;
+  display: block;
+  color: var(--term-text);
+  white-space: pre;
+  word-break: normal;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+}
+
+/* Blockquote */
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0.6em 0;
+  padding: 0.15em 0.8em;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.prose blockquote p { margin-bottom: 0; }
+
+/* Tables (GFM) */
+.prose-table-wrap {
+  margin: 0.75em 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.prose-table-wrap > table {
+  overflow: hidden;
+  border-radius: 8px;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  display: table;
+  min-width: 100%;
+}
+.prose thead { display: table-header-group; }
+.prose tbody { display: table-row-group; }
+.prose tr    { display: table-row; }
+.prose th, .prose td {
+  display: table-cell;
+  padding: 0.5em 0.9em;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.prose td { white-space: normal; }
+.prose tbody tr:last-child td { border-bottom: none; }
+.prose th {
+  background: var(--bg-raised);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.prose tbody tr { transition: background 0.1s; }
+.prose tbody tr:hover { background: var(--bg-raised); }
+
+/* Strikethrough (GFM) */
+.prose del { text-decoration: line-through; color: var(--text-muted); }
+
+/* Links */
+.prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose a:hover { color: var(--accent-hover); }
+
+/* Emphasis */
+.prose strong { font-weight: 700; }
+.prose em     { font-style: italic; }
+
+/* Horizontal rule */
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+
+/* ── 通用动画 ──────────────────────────────────────────────────── */
+
+/* 下拉菜单：从触发点往下展开 */
+@keyframes dropDown {
+  from { opacity: 0; transform: translateY(-6px) scaleY(0.94); }
+  to   { opacity: 1; transform: translateY(0)    scaleY(1);    }
+}
+/* 上弹菜单：从触发点往上展开 */
+@keyframes dropUp {
+  from { opacity: 0; transform: translateY(6px) scaleY(0.94); }
+  to   { opacity: 1; transform: translateY(0)   scaleY(1);    }
+}
+/* 弹窗遮罩 */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+/* 弹窗内容 */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+/* 顶部滑入（busy 条、消息等） */
+@keyframes slideFromTop {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+/* 底部滑入（审批卡片、错误条） */
+@keyframes slideFromBottom {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+/* 新消息淡入 */
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.anim-drop-down    { animation: dropDown      0.16s cubic-bezier(0.22,1,0.36,1) forwards; transform-origin: top center; }
+.anim-drop-up      { animation: dropUp        0.16s cubic-bezier(0.22,1,0.36,1) forwards; transform-origin: bottom center; }
+.anim-fade-in      { animation: fadeIn        0.18s ease forwards; }
+.anim-scale-in     { animation: scaleIn       0.2s  cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-slide-top    { animation: slideFromTop  0.18s cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-slide-bottom { animation: slideFromBottom 0.2s cubic-bezier(0.22,1,0.36,1) forwards; }
+.anim-msg-in       { animation: msgIn         0.22s cubic-bezier(0.22,1,0.36,1) forwards; }
+
+/* Streaming cursor */
+.prose-streaming::after {
+  content: "▌";
+  display: inline;
+  color: var(--accent);
+  animation: blink 0.8s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
