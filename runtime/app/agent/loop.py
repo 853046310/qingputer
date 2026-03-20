@@ -17,6 +17,7 @@ class LoopState(TypedDict, total=False):
     last_error: str | None
     action: AgentAction | None
     streaming_message_id: str | None
+    content_streamed: bool
     terminal_state: Literal[
         "planning",
         "planned",
@@ -28,6 +29,102 @@ class LoopState(TypedDict, total=False):
         "execution_failed",
         "finished",
     ]
+
+
+class ContentFieldExtractor:
+    """Detects and extracts the ``content`` field value from a streamed
+    ``final_answer`` JSON response.  Feeds raw SSE deltas and emits only the
+    decoded content-string characters, allowing us to stream the final answer
+    to the user *while* the LLM is still generating."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._phase = 0  # 0=detect final_answer, 1=detect content field, 2=in string, 3=done
+        self._search_from = 0
+        self._escape_next = False
+
+    @property
+    def is_streaming(self) -> bool:
+        return self._phase == 2
+
+    def feed(self, delta: str) -> str:
+        """Feed an SSE delta.  Returns extracted content to stream (may be empty)."""
+        self._buffer += delta
+
+        if self._phase == 0:
+            idx = self._buffer.find('"final_answer"', self._search_from)
+            if idx >= 0:
+                self._phase = 1
+                self._search_from = idx + len('"final_answer"')
+            return ""
+
+        if self._phase == 1:
+            return self._try_enter_content_string()
+
+        if self._phase == 2:
+            return self._extract_string_chars(delta)
+
+        return ""
+
+    # ------------------------------------------------------------------
+
+    def _try_enter_content_string(self) -> str:
+        while True:
+            idx = self._buffer.find('"content"', self._search_from)
+            if idx < 0:
+                return ""
+            rest = self._buffer[idx + len('"content"'):]
+            i = 0
+            while i < len(rest) and rest[i] in " \t\n\r":
+                i += 1
+            if i >= len(rest):
+                return ""  # need more data
+            if rest[i] != ":":
+                self._search_from = idx + len('"content"')
+                continue
+            i += 1
+            while i < len(rest) and rest[i] in " \t\n\r":
+                i += 1
+            if i >= len(rest):
+                return ""  # need more data
+            if rest[i] != '"':
+                self._search_from = idx + len('"content"')
+                continue
+            # Found opening quote of content value
+            self._phase = 2
+            initial = rest[i + 1:]
+            return self._extract_string_chars(initial)
+
+    def _extract_string_chars(self, text: str) -> str:
+        result: list[str] = []
+        for ch in text:
+            if self._phase != 2:
+                break
+            if self._escape_next:
+                if ch == "n":
+                    result.append("\n")
+                elif ch == "t":
+                    result.append("\t")
+                elif ch == "r":
+                    result.append("\r")
+                elif ch in ('"', "\\", "/"):
+                    result.append(ch)
+                elif ch == "b":
+                    result.append("\b")
+                elif ch == "f":
+                    result.append("\f")
+                else:
+                    result.append("\\")
+                    result.append(ch)
+                self._escape_next = False
+            elif ch == "\\":
+                self._escape_next = True
+            elif ch == '"':
+                self._phase = 3  # end of string
+                break
+            else:
+                result.append(ch)
+        return "".join(result)
 
 
 class AgentLoop:
@@ -45,6 +142,7 @@ class AgentLoop:
             "last_error": None,
             "terminal_state": "planning",
             "action": None,
+            "content_streamed": False,
         }
         await graph.ainvoke(
             initial_state,
@@ -81,9 +179,40 @@ class AgentLoop:
             )
             streaming_message_id = str(uuid4())
 
+            # ── Real-time streaming for final_answer ──
+            # The extractor detects when the LLM is generating a final_answer
+            # and starts streaming the content field to the frontend immediately,
+            # instead of waiting for the full response.
+            extractor = ContentFieldExtractor()
+            content_streamed = False
+
+            async def on_chunk(delta: str) -> None:
+                nonlocal content_streamed
+                extracted = extractor.feed(delta)
+                if not extracted:
+                    return
+                if not content_streamed:
+                    await manager.publish_ephemeral_event(
+                        session_id,
+                        EventKind.ASSISTANT_STREAM_START,
+                        {"message_id": streaming_message_id},
+                    )
+                    content_streamed = True
+                await manager.publish_ephemeral_event(
+                    session_id,
+                    EventKind.ASSISTANT_CHUNK,
+                    {"message_id": streaming_message_id, "chunk": extracted},
+                )
+
             try:
-                action = await manager.provider.next_action(context)
+                action = await manager.provider.next_action(context, on_chunk=on_chunk)
             except Exception as exc:
+                if content_streamed:
+                    await manager.publish_ephemeral_event(
+                        session_id,
+                        EventKind.ASSISTANT_STREAM_END,
+                        {"message_id": streaming_message_id},
+                    )
                 error_text = self._describe_exception(exc)
                 await manager.publish_error(session_id, f"Provider failure: {error_text}")
                 await manager.add_message(
@@ -94,21 +223,31 @@ class AgentLoop:
                 await manager.set_status(session_id, SessionStatus.AUTHORIZED)
                 return {"terminal_state": "provider_error", "last_error": error_text}
 
+            if content_streamed:
+                await manager.publish_ephemeral_event(
+                    session_id,
+                    EventKind.ASSISTANT_STREAM_END,
+                    {"message_id": streaming_message_id},
+                )
+
             return {
                 "action": action,
                 "step_count": state.get("step_count", 0) + 1,
                 "terminal_state": "planned",
                 "streaming_message_id": streaming_message_id,
+                "content_streamed": content_streamed,
             }
 
         async def finalize(state: LoopState) -> LoopState:
             session_id = state["session_id"]
             action = state.get("action")
             streaming_message_id = state.get("streaming_message_id")
+            content_already_streamed = state.get("content_streamed", False)
             content = ""
             if action is not None:
                 content = str(action.args.get("content") or action.summary or "")
-            if streaming_message_id:
+            # Only fake-stream if content was NOT already streamed during LLM generation
+            if streaming_message_id and not content_already_streamed:
                 await manager.stream_assistant_reply(
                     session_id,
                     message_id=streaming_message_id,

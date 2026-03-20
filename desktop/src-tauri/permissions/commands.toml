@@ -1,0 +1,54 @@
+[[permission]]
+identifier = "allow-runtime-connection"
+description = "Allow the main window to read the Qingputer runtime connection."
+commands.allow = ["runtime_connection"]
+
+[[permission]]
+identifier = "allow-runtime-request"
+description = "Allow the main window to proxy HTTP requests into the Qingputer runtime."
+commands.allow = ["runtime_request"]
+
+[[permission]]
+identifier = "allow-qingcode-connection"
+description = "Allow the main window to read the QingCode runtime connection."
+commands.allow = ["qingcode_connection"]
+
+[[permission]]
+identifier = "allow-qingcode-request"
+description = "Allow the main window to proxy HTTP requests into the QingCode runtime."
+commands.allow = ["qingcode_request"]
+
+[[permission]]
+identifier = "allow-default-session-config"
+description = "Allow the main window to read the default session configuration."
+commands.allow = ["default_session_config"]
+
+[[permission]]
+identifier = "allow-local-ip-address"
+description = "Allow the main window to read the local IP address."
+commands.allow = ["local_ip_address"]
+
+[[permission]]
+identifier = "allow-qingflow-auth-start"
+description = "Allow the main window to open the Qingflow auth window."
+commands.allow = ["qingflow_auth_start"]
+
+[[permission]]
+identifier = "allow-qingflow-auth-snapshot"
+description = "Allow the main window to read the Qingflow auth probe state."
+commands.allow = ["qingflow_auth_snapshot"]
+
+[[permission]]
+identifier = "allow-qingflow-auth-stop"
+description = "Allow the main window to close the Qingflow auth window."
+commands.allow = ["qingflow_auth_stop"]
+
+[[permission]]
+identifier = "allow-qingflow-auth-report"
+description = "Allow the remote Qingflow auth window to report token and workspace candidates."
+commands.allow = ["qingflow_auth_report"]
+
+[[permission]]
+identifier = "allow-open-external-url"
+description = "Allow the main window to open a URL in the system browser."
+commands.allow = ["open_external_url"]

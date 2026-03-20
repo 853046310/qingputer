@@ -23,6 +23,7 @@ Python runtime sidecar
     +-- PolicyEngine
     +-- CapabilityRouter
     +-- AuditLogger
+    +-- SkillService
     |
     +-- TerminalCapability
     +-- FilesystemCapability
@@ -64,3 +65,15 @@ Each user message triggers a LangGraph state graph:
 8. Repeat until `final_answer`, approval pause, provider failure, or step limit.
 
 The runtime never exposes raw shell or browser objects to the model.
+
+## Skill integration
+
+Before each provider call, `SessionManager.build_provider_context()` now enriches the model context with local skill metadata:
+
+- Search upward from the session `cwd` for an `AGENTS.md` file.
+- If found, parse its `Available skills` registry and resolve the referenced `SKILL.md` files.
+- If no `AGENTS.md` is present, fall back to installed skills under `$CODEX_HOME/skills`.
+- Select active skills from the latest user message by explicit mention first, then by lightweight name/description matching.
+- Inject both the available skill list and the active skill instruction excerpts into `context.skills`.
+
+The provider prompt treats `context.skills.active` as workflow guidance, while still enforcing session grants, policy checks, and the user's latest request.

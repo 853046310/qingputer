@@ -6,7 +6,15 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models import McpServerConfig, MessageRequest, SessionCreateRequest, SessionUpdateRequest
+from app.models import (
+    McpServerConfig,
+    MessageRequest,
+    QingflowConnectRequest,
+    QingflowPasswordLoginRequest,
+    QingflowSelectWorkspaceRequest,
+    SessionCreateRequest,
+    SessionUpdateRequest,
+)
 from app.session import SessionManager
 
 
@@ -17,6 +25,7 @@ _ALLOWED_ORIGINS = [
     "tauri://localhost",
     "http://tauri.localhost",
     "https://tauri.localhost",
+    "*",
 ]
 
 
@@ -118,15 +127,73 @@ def create_app(manager: SessionManager, bearer_token: str) -> FastAPI:
 
     @app.put("/api/settings", dependencies=[Depends(require_auth)])
     async def update_settings(payload: dict[str, Any]):
-        return manager.update_settings(
-            openai_base_url=payload.get("openai_base_url"),
-            openai_model=payload.get("openai_model"),
-            openai_api_key=payload.get("openai_api_key"),
-        )
+        try:
+            return manager.update_settings(
+                model_provider=payload.get("model_provider"),
+                openai_base_url=payload.get("openai_base_url"),
+                openai_model=payload.get("openai_model"),
+                openai_api_key=payload.get("openai_api_key"),
+                openrouter_base_url=payload.get("openrouter_base_url"),
+                openrouter_model=payload.get("openrouter_model"),
+                openrouter_api_key=payload.get("openrouter_api_key"),
+                qingflow_web_origin=payload.get("qingflow_web_origin"),
+                qingflow_api_base_url=payload.get("qingflow_api_base_url"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/qingflow/status", dependencies=[Depends(require_auth)])
+    async def get_qingflow_status():
+        return await manager.get_qingflow_status()
+
+    @app.post("/api/qingflow/connect", dependencies=[Depends(require_auth)])
+    async def connect_qingflow(request: QingflowConnectRequest):
+        try:
+            return await manager.connect_qingflow(request.token, request.detected_ws_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/qingflow/login", dependencies=[Depends(require_auth)])
+    async def login_qingflow(request: QingflowPasswordLoginRequest):
+        try:
+            return await manager.login_qingflow(request.email, request.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/qingflow/select-workspace", dependencies=[Depends(require_auth)])
+    async def select_qingflow_workspace(request: QingflowSelectWorkspaceRequest):
+        try:
+            return await manager.select_qingflow_workspace(request.ws_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/qingflow/logout", dependencies=[Depends(require_auth)])
+    async def logout_qingflow():
+        return await manager.logout_qingflow()
+
+    @app.post("/api/qingflow/mcp-sync", dependencies=[Depends(require_auth)])
+    async def sync_qingflow_mcp():
+        try:
+            return await manager.sync_qingflow_mcp()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.delete("/api/settings/openai-key", dependencies=[Depends(require_auth)])
     async def delete_openai_key():
-        return manager.delete_openai_api_key()
+        return manager.delete_api_key("openai")
+
+    @app.delete("/api/settings/model-api-key/{provider}", dependencies=[Depends(require_auth)])
+    async def delete_model_api_key(provider: str):
+        try:
+            return manager.delete_api_key(provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/settings/browser-profile/reset", dependencies=[Depends(require_auth)])
     async def reset_browser_profile():

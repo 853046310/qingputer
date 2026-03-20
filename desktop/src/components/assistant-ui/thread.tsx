@@ -94,10 +94,27 @@ const TOOL_CATEGORY_ICON: Record<string, ReactNode> = {
 const ThreadMessage: FC = () => {
   const message = useMessage();
   const custom = message.metadata?.custom as Record<string, unknown> | undefined;
+  if (custom?._thinking) return <ThinkingBubble />;
   if (custom?._isToolStep) return <ToolStepRow />;
   if (message.role === "user") return <UserMessage />;
   return <AssistantMessage />;
 };
+
+const ThinkingBubble: FC = () => (
+  <MessagePrimitive.Root
+    className="aui-assistant-message-root fade-in relative mx-auto w-full max-w-(--thread-max-width) animate-in py-3 duration-300"
+    data-role="assistant"
+  >
+    <div className="flex items-center gap-2.5 px-2">
+      <div className="flex items-center gap-1">
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:0ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:300ms]" />
+      </div>
+      <span className="text-sm text-muted-foreground">智能体思考中…</span>
+    </div>
+  </MessagePrimitive.Root>
+);
 
 const ToolStepRow: FC = () => {
   const message = useMessage();
@@ -216,9 +233,8 @@ const ComposerAction: FC = () => {
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 gap-1 text-[11px] font-medium [&_svg]:size-auto"
+              className={`h-6 px-1.5 gap-1 text-[11px] font-medium [&_svg]:size-auto ${extras.approvalMode === "maximum" ? "text-amber-500" : "text-muted-foreground"}`}
               disabled={extras.disabled}
-              style={{ color: extras.approvalMode === "maximum" ? "var(--warning)" : "var(--text-muted)" }}
             >
               <Shield size={11} />
               {extras.approvalMode === "maximum" ? "完全访问" : "默认权限"}
@@ -231,13 +247,12 @@ const ComposerAction: FC = () => {
               return (
                 <DropdownMenuItem
                   key={mode}
-                  className="text-[12px] gap-2"
+                  className={`cursor-pointer gap-2 ${active ? "font-semibold text-accent-foreground" : "text-foreground"}`}
                   onClick={() => extras.onSetApprovalMode(mode)}
-                  style={{ color: active ? "var(--accent)" : "var(--text-primary)", fontWeight: active ? 600 : 400 }}
                 >
-                  <Shield size={11} style={{ color: active ? "var(--accent)" : "var(--text-muted)" }} />
+                  <Shield size={11} className={active ? "text-accent-foreground" : "text-muted-foreground"} />
                   {mode === "default" ? "默认权限" : "完全访问"}
-                  {active && <span className="ml-auto text-[10px]" style={{ color: "var(--accent)" }}>✓</span>}
+                  {active && <span className="ml-auto text-[10px] text-accent-foreground">✓</span>}
                 </DropdownMenuItem>
               );
             })}

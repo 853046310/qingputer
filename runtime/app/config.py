@@ -14,6 +14,7 @@ class AppConfig:
     app_name: str = "Qingputer"
     keychain_service: str = "com.qingputer.desktop"
     openai_model: str = "gpt-4.1"
+    openrouter_model: str = "openai/gpt-4.1"
     idle_timeout_minutes: int = 60
     absolute_timeout_hours: int = 8
     event_context_limit: int = 50
@@ -21,8 +22,10 @@ class AppConfig:
     file_excerpt_bytes: int = 16 * 1024
     file_read_limit_bytes: int = 1024 * 1024
     page_excerpt_bytes: int = 16 * 1024
+    skill_excerpt_bytes: int = 12 * 1024
     login_shell: str = _default_shell()
     home_directory: Path = Path.home()
+    codex_home_directory: Path = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
     enable_default_mcp_servers: bool = True
 
     @property

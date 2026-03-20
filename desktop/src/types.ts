@@ -104,10 +104,61 @@ export interface ChatHistoryResponse {
 }
 
 export interface SettingsPayload {
+  model_provider: "openai" | "openrouter";
   openai_base_url: string;
   openai_model: string;
   openai_api_key_set: boolean;
+  openrouter_base_url: string;
+  openrouter_model: string;
+  openrouter_api_key_set: boolean;
+  qingflow_web_origin: string;
+  qingflow_api_base_url: string;
+  qingflow_user_name: string | null;
+  qingflow_user_email: string | null;
+  qingflow_user_avatar_url: string | null;
+  qingflow_selected_ws_id: number | null;
+  qingflow_selected_ws_name: string | null;
   mcp_servers: McpServerConfig[];
+}
+
+export interface QingflowWorkspaceOption {
+  ws_id: number;
+  ws_name: string;
+  identity: string | null;
+  auth: number | null;
+  being_disabled: boolean | null;
+}
+
+export interface QingflowMcpSyncState {
+  builder_status: McpConnectionStatus;
+  user_status: McpConnectionStatus;
+  last_error: string | null;
+}
+
+export interface QingflowAuthStatus {
+  web_origin: string;
+  api_base_url: string;
+  token_set: boolean;
+  connected: boolean;
+  user_name: string | null;
+  user_email: string | null;
+  user_avatar_url: string | null;
+  selected_ws_id: number | null;
+  selected_ws_name: string | null;
+  workspaces: QingflowWorkspaceOption[];
+  requires_workspace_selection: boolean;
+  requires_workspace_creation: boolean;
+  mcp_sync: QingflowMcpSyncState;
+  last_error: string | null;
+}
+
+export interface QingflowAuthProbe {
+  window_open: boolean;
+  url: string | null;
+  token_candidate: string | null;
+  ws_id_candidate: number | null;
+  observed_keys: string[];
+  last_error: string | null;
 }
 
 export interface DefaultSessionConfig {

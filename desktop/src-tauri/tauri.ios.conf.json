@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "externalBin": [],
+    "resources": {}
+  },
+  "identifier": "com.qingputer.mobile",
+  "app": {
+    "windows": []
+  }
+}

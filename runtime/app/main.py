@@ -28,7 +28,7 @@ async def serve() -> None:
     server = uvicorn.Server(
         uvicorn.Config(
             app,
-            host="127.0.0.1",
+            host="0.0.0.0",
             port=port,
             access_log=False,
             log_level="warning",

@@ -23,8 +23,26 @@ class SecretStore:
         self._cache_secret("openai_api_key", normalized)
         return normalized
 
+    def get_openrouter_api_key(self) -> str | None:
+        value = self._get_secret("openrouter_api_key")
+        normalized = self._normalize_api_key(value)
+        self._cache_secret("openrouter_api_key", normalized)
+        return normalized
+
+    def get_qingflow_api_token(self) -> str | None:
+        value = self._get_secret("qingflow_api_token")
+        normalized = self._normalize_api_key(value)
+        self._cache_secret("qingflow_api_token", normalized)
+        return normalized
+
     def has_openai_api_key(self) -> bool:
         return self._has_secret("openai_api_key")
+
+    def has_openrouter_api_key(self) -> bool:
+        return self._has_secret("openrouter_api_key")
+
+    def has_qingflow_api_token(self) -> bool:
+        return self._has_secret("qingflow_api_token")
 
     def set_openai_api_key(self, api_key: str) -> None:
         normalized = self._normalize_api_key(api_key)
@@ -42,6 +60,38 @@ class SecretStore:
             self._delete_fallback("openai_api_key")
         self._cache_secret("openai_api_key", normalized)
 
+    def set_openrouter_api_key(self, api_key: str) -> None:
+        normalized = self._normalize_api_key(api_key)
+        if normalized is None:
+            raise ValueError("API key must be ASCII text without whitespace, and cannot be empty.")
+        stored = False
+        try:
+            keyring.set_password(self._service, "openrouter_api_key", normalized)
+            stored = keyring.get_password(self._service, "openrouter_api_key") == normalized
+        except Exception:
+            stored = False
+        if not stored:
+            self._write_fallback("openrouter_api_key", normalized)
+        else:
+            self._delete_fallback("openrouter_api_key")
+        self._cache_secret("openrouter_api_key", normalized)
+
+    def set_qingflow_api_token(self, token: str) -> None:
+        normalized = self._normalize_api_key(token)
+        if normalized is None:
+            raise ValueError("Token must be ASCII text without whitespace, and cannot be empty.")
+        stored = False
+        try:
+            keyring.set_password(self._service, "qingflow_api_token", normalized)
+            stored = keyring.get_password(self._service, "qingflow_api_token") == normalized
+        except Exception:
+            stored = False
+        if not stored:
+            self._write_fallback("qingflow_api_token", normalized)
+        else:
+            self._delete_fallback("qingflow_api_token")
+        self._cache_secret("qingflow_api_token", normalized)
+
     def delete_openai_api_key(self) -> None:
         try:
             keyring.delete_password(self._service, "openai_api_key")
@@ -49,6 +99,22 @@ class SecretStore:
             pass
         self._delete_fallback("openai_api_key")
         self._cache_secret("openai_api_key", None)
+
+    def delete_openrouter_api_key(self) -> None:
+        try:
+            keyring.delete_password(self._service, "openrouter_api_key")
+        except Exception:
+            pass
+        self._delete_fallback("openrouter_api_key")
+        self._cache_secret("openrouter_api_key", None)
+
+    def delete_qingflow_api_token(self) -> None:
+        try:
+            keyring.delete_password(self._service, "qingflow_api_token")
+        except Exception:
+            pass
+        self._delete_fallback("qingflow_api_token")
+        self._cache_secret("qingflow_api_token", None)
 
     def get_openai_base_url(self) -> str | None:
         return self._get_secret("openai_base_url")

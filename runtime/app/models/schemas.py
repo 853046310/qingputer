@@ -104,6 +104,11 @@ class McpConnectionStatus(str, Enum):
     ERROR = "error"
 
 
+class ModelProvider(str, Enum):
+    OPENAI = "openai"
+    OPENROUTER = "openrouter"
+
+
 class CapabilityGrants(BaseModel):
     terminal: bool = True
     filesystem: bool = True
@@ -239,10 +244,66 @@ class McpServerRuntimeState(BaseModel):
     instructions: str | None = None
 
 
+class QingflowWorkspaceOption(BaseModel):
+    ws_id: int
+    ws_name: str
+    identity: str | None = None
+    auth: int | None = None
+    being_disabled: bool | None = None
+
+
+class QingflowMcpSyncState(BaseModel):
+    builder_status: McpConnectionStatus = McpConnectionStatus.DISCONNECTED
+    user_status: McpConnectionStatus = McpConnectionStatus.DISCONNECTED
+    last_error: str | None = None
+
+
+class QingflowAuthStatus(BaseModel):
+    web_origin: str = "https://qingflow.com"
+    api_base_url: str = "https://qingflow.com/api"
+    token_set: bool = False
+    connected: bool = False
+    user_name: str | None = None
+    user_email: str | None = None
+    user_avatar_url: str | None = None
+    selected_ws_id: int | None = None
+    selected_ws_name: str | None = None
+    workspaces: list[QingflowWorkspaceOption] = Field(default_factory=list)
+    requires_workspace_selection: bool = False
+    requires_workspace_creation: bool = False
+    mcp_sync: QingflowMcpSyncState = Field(default_factory=QingflowMcpSyncState)
+    last_error: str | None = None
+
+
+class QingflowConnectRequest(BaseModel):
+    token: str = Field(min_length=1)
+    detected_ws_id: int | None = None
+
+
+class QingflowPasswordLoginRequest(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class QingflowSelectWorkspaceRequest(BaseModel):
+    ws_id: int
+
+
 class SettingsPayload(BaseModel):
+    model_provider: ModelProvider = ModelProvider.OPENAI
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4.1"
     openai_api_key_set: bool = False
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "openai/gpt-4.1"
+    openrouter_api_key_set: bool = False
+    qingflow_web_origin: str = "https://qingflow.com"
+    qingflow_api_base_url: str = "https://qingflow.com/api"
+    qingflow_user_name: str | None = None
+    qingflow_user_email: str | None = None
+    qingflow_user_avatar_url: str | None = None
+    qingflow_selected_ws_id: int | None = None
+    qingflow_selected_ws_name: str | None = None
     mcp_defaults_initialized: bool = False
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
 
@@ -252,9 +313,9 @@ QINGFLOW_LEGACY_MCP_SERVER_ID = "qingflow-mcp"
 QINGFLOW_APP_USER_MCP_SERVER_ID = "qingflow-app-user-mcp"
 QINGFLOW_APP_BUILDER_MCP_SERVER_ID = "qingflow-app-builder-mcp"
 QINGFLOW_APP_USER_MCP_PACKAGE = "@josephyan/qingflow-app-user-mcp"
-QINGFLOW_APP_USER_MCP_VERSION = "0.1.0-beta.9"
+QINGFLOW_APP_USER_MCP_VERSION = "0.2.0-beta.6"
 QINGFLOW_APP_BUILDER_MCP_PACKAGE = "@josephyan/qingflow-app-builder-mcp"
-QINGFLOW_APP_BUILDER_MCP_VERSION = "0.1.0-beta.12"
+QINGFLOW_APP_BUILDER_MCP_VERSION = "0.2.0-beta.6"
 
 
 def default_qingflow_mcp_command() -> str:

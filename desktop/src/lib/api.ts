@@ -3,11 +3,13 @@ import type {
   ChatHistoryResponse,
   McpServerConfig,
   McpServerRuntimeState,
+  QingflowAuthStatus,
   RuntimeConnection,
   SessionRecord,
   SessionUpdatePayload,
   SettingsPayload,
 } from "../types";
+import type { IRuntimeApi } from "./api-interface";
 import { invoke } from "@tauri-apps/api/core";
 
 interface RuntimeBridgeResponse {
@@ -15,7 +17,7 @@ interface RuntimeBridgeResponse {
   body: string;
 }
 
-export class RuntimeApi {
+export class RuntimeApi implements IRuntimeApi {
   constructor(private connection: RuntimeConnection) {}
 
   private async refreshConnection(): Promise<RuntimeConnection> {
@@ -120,9 +122,15 @@ export class RuntimeApi {
   }
 
   updateSettings(payload: {
+    model_provider?: "openai" | "openrouter";
     openai_base_url?: string;
     openai_model?: string;
     openai_api_key?: string;
+    openrouter_base_url?: string;
+    openrouter_model?: string;
+    openrouter_api_key?: string;
+    qingflow_web_origin?: string;
+    qingflow_api_base_url?: string;
   }): Promise<SettingsPayload> {
     return this.request<SettingsPayload>("/api/settings", {
       method: "PUT",
@@ -130,8 +138,41 @@ export class RuntimeApi {
     });
   }
 
-  deleteOpenAiKey(): Promise<SettingsPayload> {
-    return this.request<SettingsPayload>("/api/settings/openai-key", { method: "DELETE" });
+  deleteModelKey(provider: "openai" | "openrouter"): Promise<SettingsPayload> {
+    return this.request<SettingsPayload>(`/api/settings/model-api-key/${provider}`, { method: "DELETE" });
+  }
+
+  getQingflowStatus(): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/status");
+  }
+
+  loginQingflow(payload: { email: string; password: string }): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  connectQingflow(payload: { token: string; detected_ws_id?: number | null }): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/connect", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  selectQingflowWorkspace(wsId: number): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/select-workspace", {
+      method: "POST",
+      body: JSON.stringify({ ws_id: wsId }),
+    });
+  }
+
+  logoutQingflow(): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/logout", { method: "POST" });
+  }
+
+  syncQingflowMcp(): Promise<QingflowAuthStatus> {
+    return this.request<QingflowAuthStatus>("/api/qingflow/mcp-sync", { method: "POST" });
   }
 
   resetBrowserProfile(): Promise<{ reset: boolean }> {

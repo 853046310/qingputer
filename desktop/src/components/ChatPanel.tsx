@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -12,6 +12,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Thread, ComposerExtrasContext } from "@/components/assistant-ui/thread";
+import { hapticLight, hapticMedium } from "../lib/mobile-bridge";
 import type { ApprovalMode, ApprovalRequest, ChatMessage } from "../types";
 
 // ─── Props ─────────────────────────────────────────────────────────────────────
@@ -37,11 +38,48 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const isRunning = busy || sessionActive;
 
+  // ── "智能体思考中" indicator: show after 1s if running but no streaming yet ──
+  const [showThinking, setShowThinking] = useState(false);
+  const hasStreaming = messages.some((m) => m.metadata?.streaming === true);
+
+  useEffect(() => {
+    if (!isRunning || hasStreaming) {
+      setShowThinking(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowThinking(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [isRunning, hasStreaming]);
+
+  const displayMessages: ChatMessage[] = showThinking
+    ? [
+        ...messages,
+        {
+          message_id: "__thinking__",
+          session_id: "",
+          role: "assistant",
+          content: "",
+          created_at: new Date().toISOString(),
+          metadata: { _thinking: true, streaming: true },
+        },
+      ]
+    : messages;
+
   const convertedMessages = useExternalMessageConverter({
-    messages,
+    messages: displayMessages,
     isRunning,
     joinStrategy: "none",
     callback: (msg: ChatMessage) => {
+      if (msg.metadata?._thinking) {
+        return {
+          role: "assistant" as const,
+          id: msg.message_id,
+          createdAt: new Date(msg.created_at),
+          content: "",
+          status: { type: "running" as const },
+          metadata: { custom: { _thinking: true } },
+        };
+      }
       if (msg.role === "tool") {
         const summary = parseToolSummary(msg);
         return {
@@ -98,7 +136,10 @@ export function ChatPanel({
         .filter((p): p is { type: "text"; text: string } => p.type === "text")
         .map((p) => p.text)
         .join("");
-      if (text.trim()) await onSend(text);
+      if (text.trim()) {
+        void hapticLight();
+        await onSend(text);
+      }
     },
   }), [convertedMessages, isRunning, disabled, onSend]);
 
@@ -113,8 +154,8 @@ export function ChatPanel({
         {/* 执行状态 */}
         {busy && (
           <div
-            className="flex items-center gap-2 px-4 py-1.5 shrink-0 text-[11px] anim-slide-top"
-            style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-surface)" }}
+            className="flex items-center gap-2 px-4 py-1.5 shrink-0 text-[11px] border-b border-border/50 anim-slide-top"
+            style={{ background: "var(--bg-surface)" }}
           >
             <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--accent)" }} />
             <span style={{ color: "var(--accent)" }}>执行中…</span>
@@ -180,13 +221,13 @@ function ApprovalCard({
         )}
       </div>
       <div className="flex gap-1.5 shrink-0">
-        <Button size="sm" className="h-7 gap-1 text-[12px] [&_svg]:size-auto" disabled={disabled} onClick={onApprove}>
+        <Button size="sm" className="h-7 gap-1 text-[12px] [&_svg]:size-auto" disabled={disabled} onClick={() => { void hapticMedium(); onApprove(); }}>
           <CheckCircle2 size={11} /> 批准
         </Button>
         <Button
           variant="outline" size="sm"
           className="h-7 gap-1 text-[12px] [&_svg]:size-auto"
-          disabled={disabled} onClick={onDeny}
+          disabled={disabled} onClick={() => { void hapticMedium(); onDeny(); }}
           style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)", borderColor: "var(--border)" }}
         >
           <XCircle size={11} /> 拒绝

@@ -7,7 +7,7 @@
 - Prompt:
 
 ```text
-账号：yanqidong@exiao.tech 密码：yqd1029384756 工作区：轻流；在应用包：“测试区-系统管理员” 创建一个测试应用，包含所有字段、布局完整的表单
+账号：<redacted> 密码：<redacted> 工作区：轻流；在应用包：“测试区-系统管理员” 创建一个测试应用，包含所有字段、布局完整的表单
 ```
 
 - Builder MCP versions compared:
@@ -597,3 +597,442 @@ Interpretation:
   - weak requirements-to-app-spec synthesis
   - non-idempotent repair
   - and oversized schema-example payloads that can still derail the agent
+
+## Beta 12 Validation (5 real backend runs, customer order form)
+
+Prompt:
+
+- `账号：<redacted> 密码：<redacted> 工作区：轻流；在应用包：“测试区-系统管理员” 搭建一个全字段的客户订单表单、布局优美。`
+
+Raw artifacts:
+
+- `/tmp/qingputer_qingflow_customer_order_runs_beta12.json`
+- `/tmp/qingputer_qingflow_customer_order_runs_beta12_final.json`
+
+### Overall result
+
+- `0/5` runs fully satisfied the requirement
+- `3/5` runs entered real build/apply/repair flows
+- `2/5` runs failed immediately because `package_list` returned no matching package at all
+- `2/5` runs ended with provider-side schema drift after re-entering `solution_schema_example`
+- `1/5` run ended with a useful assistant diagnosis that explicitly recommended stopping high-level repair and switching to a hand-authored `solution_build_app`
+
+### Repeated patterns
+
+#### Pattern A: package lookup instability
+
+Observed in run 2 and run 5:
+
+- `package_list` returned `0` packages
+- builder reported:
+  - `package_name '测试区-系统管理员' was not found`
+
+This is inconsistent with other runs in the same workspace and same package name.
+
+#### Pattern B: “all fields” is now partially understood, but still wrong
+
+Observed in run 3 and run 4 plan output:
+
+- `field_count = 17`
+- `all_fields_mode = true`
+- recognized field types included:
+  - `text`
+  - `long_text`
+  - `number`
+  - `amount`
+  - `date`
+  - `datetime`
+  - `member`
+  - `department`
+  - `single_select`
+  - `multi_select`
+  - `phone`
+  - `email`
+  - `address`
+  - `attachment`
+  - `boolean`
+  - `relation`
+  - `subtable`
+
+This is progress over the previous “one title field” failure, but it is still not production-safe:
+
+- it still forces layout to `grouped`
+- it treats “布局优美” as grouped layout, not a richer layout spec
+- it includes `relation` and `subtable`, which later become the main failure source
+
+#### Pattern C: high-level repair still does not converge
+
+Observed in run 3:
+
+- repeated `repair` attempts kept failing
+- assistant diagnosis explicitly said the tool kept regenerating incompatible `relation/subtable` structures
+- latest draft app still had only system base fields
+- `formQuestions = 0`
+
+This is a stronger signal than previous runs:
+
+- the problem is no longer just “can it create an app”
+- the problem is “can it converge to a usable business form from a high-level natural-language build loop”
+
+#### Pattern D: schema example still destabilizes the planner
+
+Observed in run 1 and run 4:
+
+- after build/apply/repair, the agent fell back into `solution_schema_example`
+- first with invalid intent values such as `form` or `repair`
+- then with `intent=minimal`
+- finally the provider failed with:
+  - `Provider returned an action payload that did not match the expected schema`
+
+So the old “example payload too large / too agent-hostile” problem is still active.
+
+### Run-level summary
+
+#### Run 1
+
+- Entered build flow
+- Created app shells:
+  - `duhngrqv6002`
+  - `duhniv8f6002`
+- Then fell back to `solution_schema_example`
+- Ended in provider action schema failure
+
+#### Run 2
+
+- Did not enter creation
+- `package_list` returned no matching package
+- Assistant correctly stopped and asked for package confirmation
+
+#### Run 3
+
+- Entered full build flow
+- Created app shells including:
+  - `duhoidsv5c01`
+  - `duhojsc75c01`
+  - `duhoul2v6001`
+- Assistant concluded:
+  - stop repeating `solution_build_app_from_requirements`
+  - switch to explicit flattened `solution_build_app`
+  - avoid `section / relation / subtable`
+- This is the most useful diagnostic run
+
+#### Run 4
+
+- Entered build flow
+- Created app shells:
+  - `duhpa92r6001`
+  - `duhpc3ir6002`
+- Read back `app_get_base` and `app_get_form_schema`
+- Then returned to `solution_schema_example`
+- Ended in provider action schema failure
+
+#### Run 5
+
+- Same as run 2
+- `package_list` returned no matching package
+- Assistant stopped and asked for confirmation
+
+### New confirmed issues from the customer-order prompt
+
+1. `package_list` is nondeterministic across identical live runs.
+   - Same workspace, same package name
+   - sometimes package exists
+   - sometimes zero packages are returned
+
+2. Requirements parsing is improved but still unsafe.
+   - it now recognizes “all fields”
+   - but it over-expands into `relation` and `subtable`
+   - and still downgrades aesthetics to plain grouped layout
+
+3. High-level `solution_build_app_from_requirements` is still not convergent for rich forms.
+   - it can create shells
+   - but cannot reliably finish a usable form spec from natural language alone
+
+4. `solution_schema_example` is still a destabilizing fallback.
+   - it remains easy for the planner to enter with invalid intent values
+   - and it can still trigger provider-side schema drift
+
+### Updated recommendation
+
+For rich form-generation tasks like “全字段客户订单表单、布局优美”, the current best path is:
+
+1. Use high-level requirements mode only for rough planning.
+2. Stop before repeated repair loops.
+3. Switch to explicit `solution_build_app` with a flattened, hand-authored app spec.
+4. Exclude advanced structures by default:
+   - `relation`
+   - `subtable`
+5. Make layout explicit instead of relying on “优美 / 完整 / grouped” interpretation.
+
+## Beta 15 Validation (3 real backend runs, same customer-order prompt)
+
+Prompt:
+
+- `账号：<redacted> 密码：<redacted> 工作区：轻流；在应用包：“测试区-系统管理员” 搭建一个全字段的客户订单表单、布局优美。`
+
+Raw artifact:
+
+- `/tmp/qingputer_qingflow_customer_order_runs_beta15.json`
+
+### Version shape changed materially
+
+This version is not just an incremental patch. The exposed builder surface is much smaller and more opinionated.
+
+Observed tool count:
+
+- `qingflow-app-builder-mcp`: `15` tools
+- `qingflow-app-user-mcp`: `39` tools
+
+Builder tool set now centers around:
+
+- `package_resolve`
+- `app_resolve`
+- `app_read`
+- `app_schema_apply`
+- `app_layout_apply`
+- `app_flow_apply`
+- `app_views_apply`
+- `app_publish_verify`
+
+So beta 15 looks like a redesigned “low-level apply pipeline” rather than the older solution-heavy builder.
+
+### Real run outcome
+
+- `0/3` runs reached form creation
+- `0/3` runs created any new `app_key`
+- `3/3` runs failed before package/app modification
+
+### What happened
+
+#### Run 1
+
+- `auth_login` failed with network/DNS style error:
+  - `nodename nor servname provided, or not known`
+- browser fallback to `https://app.qingflow.com` failed with:
+  - `ERR_CONNECTION_CLOSED`
+- terminal diagnostics confirmed:
+  - DNS lookup failure / NXDOMAIN
+  - HTTPS connection failure
+- assistant correctly stopped and reported external network blockage
+
+#### Run 2
+
+- Same as run 1
+- `auth_login` failed with the same network category error
+- browser and terminal fallback again confirmed connectivity failure
+- assistant again stopped instead of looping blindly
+
+#### Run 3
+
+- `qingflow-app-builder-mcp.auth_login` failed differently:
+  - backend error `49300`
+- `qingflow-app-user-mcp.auth_login` also failed
+- the agent then explored browser login pages and reached the DingTalk / Qingflow login flow
+- it determined the visible path was QR-code login rather than an email/password form
+- assistant stopped with a more specific diagnosis:
+  - not a single-MCP config problem
+  - likely login-method / backend / auth contract mismatch
+
+### Evaluation
+
+#### What is better
+
+1. Much better failure containment.
+   - beta 15 stops early when login/network/auth is impossible.
+   - it no longer burns many steps generating app shells and then failing later.
+
+2. Better diagnosis quality.
+   - it used MCP, browser, and terminal as independent checks.
+   - the final assistant messages were materially more useful than earlier versions.
+
+3. Clearer tool surface.
+   - the builder now looks more composable and explicit.
+   - this is a good direction for robust agents.
+
+#### What is worse or still unresolved
+
+1. We did not get far enough to validate actual build quality.
+   - because all three runs failed before package/app operations
+   - so beta 15 may be better architecturally, but this run did not prove the build path yet
+
+2. Authentication behavior is now the primary blocker.
+   - sometimes DNS/network style failure
+   - sometimes backend `49300`
+   - these need clarification before builder quality can be judged fairly
+
+3. Browser fallback is still not enough to complete login.
+   - the reachable login path appears centered on DingTalk QR auth
+   - that is not directly automatable from the supplied email/password pair
+
+### Beta 15 bottom line
+
+- beta 15 looks like a genuinely new builder generation, not a small patch.
+- The redesign seems directionally correct:
+  - fewer tools
+  - clearer applies
+  - earlier stop conditions
+  - better diagnostics
+- But in this environment, the version is currently blocked at authentication / connectivity, so it has **not yet proven** that it can build the requested form better than beta 12.
+
+### Recommended next verification
+
+To evaluate beta 15 fairly, the next test should avoid password-login ambiguity:
+
+1. use `auth_use_token` with a valid token and `ws_id`
+2. confirm `auth_whoami`
+3. run the same customer-order request again
+4. then judge:
+   - package resolution quality
+   - schema apply quality
+   - layout apply quality
+   - publish / verify quality
+
+## Beta 15 Validation (3 real backend runs after token/workspace injection)
+
+Setup:
+
+- builder/user MCP default profiles were already logged in
+- `workspace_select(ws_id=40013)` was applied directly to both beta 15 stdio MCP servers
+- then the Qingputer runtime MCP connections were refreshed
+
+Prompt:
+
+- `已配置可用的轻流登录态，并已选中工作区“轻流”（ws_id=40013）。请在应用包“测试区-系统管理员”中搭建一个全字段的客户订单表单，布局优美。`
+
+Raw artifact:
+
+- `/tmp/qingputer_qingflow_customer_order_runs_beta15_token.json`
+
+### High-level result
+
+- `1/3` runs produced a materially useful business result
+- `2/3` runs still failed on package attach flow
+- The new dominant blocker is no longer login:
+  - it is now `failed to attach app to package`
+
+### What beta 15 proved after token-based auth
+
+#### 1. The new builder pipeline is real
+
+The runtime used the new low-level chain, not the old solution-heavy path:
+
+- `package_resolve`
+- `app_resolve`
+- `app_schema_apply`
+- `app_read`
+- `app_layout_apply`
+
+That means the redesign is genuinely being exercised.
+
+#### 2. Full-field app creation can now succeed
+
+In run 2, beta 15 successfully created:
+
+- app title: `客户订单`
+- app key: `duosjfg7eo02`
+- field count: `30`
+
+The assistant explicitly confirmed:
+
+- app created
+- fields complete
+- customer / order / product / delivery / payment / remark / attachment fields present
+
+This is the first version in these experiments that actually produced a strong “businessly useful” app outcome for this prompt.
+
+#### 3. But package attachment is still broken
+
+The same successful run also showed:
+
+- `tag_ids = []`
+- app was not mounted into package `测试区-系统管理员`
+- earlier `app_schema_apply` calls failed with:
+  - `failed to attach app to package`
+
+So the created app exists, but package placement is still broken.
+
+### Run-level summary
+
+#### Run 1
+
+- `package_resolve` succeeded
+- `app_resolve` said app not found
+- `app_schema_apply` failed repeatedly with:
+  - `failed to attach app to package`
+- agent then tried browser fallback
+- final conclusion: stop and report package attach blocker plus missing browser login state
+
+#### Run 2
+
+- `package_resolve` succeeded with:
+  - `tag_id = 1828582`
+  - `match_mode = exact`
+- first `app_schema_apply` revealed contract tightening:
+  - `serial` is not an accepted field type
+  - payload requires `name` instead of `title`
+- after corrections, a new app was created:
+  - `duosjfg7eo02`
+- readback later showed:
+  - `30` fields now exist
+- then `app_layout_apply` failed because:
+  - every layout section requires `section_id`
+  - current app readback still had `layout.sections = []`
+  - field `sectionId = null`
+- final conclusion:
+  - schema creation succeeded
+  - package attach failed
+  - layout beautification failed
+
+#### Run 3
+
+- Same pattern as run 1
+- repeated `app_schema_apply` attach failure
+- agent again fell back to browser and detected login page
+- no app was created
+
+### New confirmed beta 15 issues
+
+1. `auth_use_token` still looks wrong at the tool contract level.
+   - direct MCP call returned `404 Not Found`
+   - but existing persisted login + `workspace_select` worked
+   - so token-based setup is possible in practice, but not cleanly exposed
+
+2. `app_schema_apply` mixes two concerns:
+   - app creation / schema write
+   - package attachment
+   - when package attach fails, it can block or partially fail otherwise valid schema work
+
+3. Package attachment is the main hard blocker now.
+   - this is the most important beta 15 issue
+
+4. `app_layout_apply` is not sufficient for first-time “beautiful layout” generation.
+   - it requires `section_id`
+   - but there is no obvious companion flow for creating new sections first
+
+5. Field schema contract is stricter, but still under-documented for agents.
+   - `serial` is not allowed
+   - `name` is required
+   - `title` is rejected
+
+### Fair evaluation of beta 15
+
+Compared with beta 12:
+
+- better:
+  - clearer low-level builder surface
+  - less planner drift
+  - can genuinely build a 30-field customer-order app
+
+- worse or still blocked:
+  - package attach is not reliable
+  - beautified layout still cannot be finished from current MCP surface
+  - token auth contract itself still looks incomplete (`auth_use_token` returned 404)
+
+### Bottom line
+
+Beta 15 is the first version that looks architecturally promising **and** can produce a useful app body when auth is out of the way.  
+But it is not yet complete enough for the full requirement:
+
+- full-field app body: **yes, partially proven**
+- mount into target package: **not reliable**
+- pretty multi-section layout: **not yet supported cleanly**

@@ -5,7 +5,7 @@ import pytest
 
 from app.agent.provider import OpenAIProvider, ProviderError
 from app.config import AppConfig
-from app.models import AgentActionKind, SettingsPayload
+from app.models import AgentActionKind, ModelProvider, SettingsPayload
 
 
 class FakeDatabase:
@@ -16,6 +16,9 @@ class FakeDatabase:
 class FakeSecretStore:
     def get_openai_api_key(self) -> str:
         return "sk-test"
+
+    def get_openrouter_api_key(self) -> str:
+        return "sk-or-test"
 
 
 class StubProvider(OpenAIProvider):
@@ -106,6 +109,9 @@ class MissingKeySecretStore:
     def get_openai_api_key(self) -> None:
         return None
 
+    def get_openrouter_api_key(self) -> None:
+        return None
+
 
 @pytest.mark.asyncio
 async def test_provider_configuration_error_mentions_invalid_or_missing_key(tmp_path: Path) -> None:
@@ -115,6 +121,62 @@ async def test_provider_configuration_error_mentions_invalid_or_missing_key(tmp_
         await provider.next_action({"messages": []})
 
     assert "missing or invalid" in str(exc_info.value)
+
+
+class OpenRouterDatabase:
+    def load_settings(self) -> SettingsPayload:
+        return SettingsPayload(
+            model_provider=ModelProvider.OPENROUTER,
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_model="openai/gpt-4.1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_provider_uses_openrouter_settings_and_headers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = '{"choices":[{"message":{"content":"{\\"kind\\":\\"final_answer\\",\\"args\\":{\\"content\\":\\"ok\\"}}"}}]}'
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"kind":"final_answer","args":{"content":"ok"}}',
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.called_with: tuple[str, dict[str, object]] | None = None
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: object) -> FakeResponse:
+            self.called_with = (url, kwargs)
+            return FakeResponse()
+
+    fake_client = FakeAsyncClient()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: fake_client)
+    provider = OpenAIProvider(AppConfig(home_directory=tmp_path), OpenRouterDatabase(), FakeSecretStore())
+
+    action = await provider.next_action({"messages": []})
+
+    assert action.kind == AgentActionKind.FINAL_ANSWER
+    assert fake_client.called_with is not None
+    url, kwargs = fake_client.called_with
+    assert url == "https://openrouter.ai/api/v1/chat/completions"
+    assert kwargs["headers"]["Authorization"] == "Bearer sk-or-test"
+    assert kwargs["headers"]["HTTP-Referer"] == "https://qingputer.app"
+    assert kwargs["headers"]["X-Title"] == "Qingputer"
+    assert kwargs["json"]["model"] == "openai/gpt-4.1"
 
 
 @pytest.mark.asyncio

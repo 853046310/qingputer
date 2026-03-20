@@ -26,6 +26,8 @@ from app.models import (
     EventEnvelope,
     EventKind,
     MessageRole,
+    McpConnectionStatus,
+    ModelProvider,
     default_mcp_servers,
     default_qingflow_app_builder_mcp_server,
     default_qingflow_app_user_mcp_server,
@@ -35,8 +37,11 @@ from app.models import (
     SettingsPayload,
     McpServerConfig,
     McpServerRuntimeState,
-)
+    QingflowAuthStatus,
+    )
 from app.policy import PolicyEngine
+from app.qingflow import QingflowAuthManager
+from app.skills import SkillService
 from app.storage import AuditLogger, Database, SecretStore
 from app.storage.paths import ensure_directories
 
@@ -63,6 +68,8 @@ class SessionManager:
         self._filesystem = FilesystemCapability(config)
         self._browser = BrowserCapability(config)
         self._mcp = McpManager()
+        self._skills = SkillService(config.codex_home_directory, excerpt_bytes=config.skill_excerpt_bytes)
+        self.qingflow_auth = QingflowAuthManager(config, self.database, self.secret_store, self._mcp)
         self._router = CapabilityRouter(self._terminal, self._filesystem, self._browser, McpCapability(self._mcp))
         self._loop = AgentLoop()
         self._live_sessions: dict[str, LiveSession] = {}
@@ -92,8 +99,10 @@ class SessionManager:
         if settings_changed:
             self.database.save_settings(settings)
         await self._mcp.startup(settings.mcp_servers)
+        await self.qingflow_auth.startup()
 
     async def shutdown(self) -> None:
+        await self.qingflow_auth.shutdown()
         for live_session in self._live_sessions.values():
             if live_session.agent_task and not live_session.agent_task.done():
                 live_session.agent_task.cancel()
@@ -195,15 +204,16 @@ class SessionManager:
         message_id: str | None = None,
     ) -> ChatMessage:
         await self.touch(session_id)
+        normalized_role = role if isinstance(role, MessageRole) else MessageRole(role)
         kwargs: dict[str, object] = {}
         if message_id:
             kwargs["message_id"] = message_id
-        message = ChatMessage(session_id=session_id, role=role, content=content, metadata=metadata or {}, **kwargs)
+        message = ChatMessage(session_id=session_id, role=normalized_role, content=content, metadata=metadata or {}, **kwargs)
         self.database.add_message(message)
         await self.publish_event(
             session_id,
             EventKind.MESSAGE,
-            {"message_id": message.message_id, "role": role.value, "content": content, "metadata": message.metadata},
+            {"message_id": message.message_id, "role": normalized_role.value, "content": content, "metadata": message.metadata},
         )
         return message
 
@@ -222,7 +232,7 @@ class SessionManager:
         *,
         message_id: str,
         content: str,
-        chunk_delay_ms: int = 14,
+        chunk_delay_ms: int = 2,
     ) -> None:
         await self.publish_ephemeral_event(
             session_id,
@@ -398,11 +408,17 @@ class SessionManager:
         live_session = self.require_session(session_id)
         messages = self.database.list_messages(session_id)
         events = self.database.list_events(session_id)[-self.config.event_context_limit :]
+        qingflow_status = self.qingflow_auth.get_status()
         context = {
             "session": live_session.record.model_dump(mode="json"),
             "messages": [message.model_dump(mode="json") for message in messages],
             "recent_events": [event.model_dump(mode="json") for event in events],
             "mcp": self._mcp.tool_context(),
+            "qingflow": self._build_qingflow_provider_context(qingflow_status),
+            "skills": self._skills.build_context(
+                cwd=live_session.record.current_cwd,
+                latest_user_message=self._latest_user_message(messages),
+            ),
             "limits": {
                 "event_context_limit": self.config.event_context_limit,
                 "command_tail_lines": self.config.command_tail_lines,
@@ -413,6 +429,38 @@ class SessionManager:
         if loop_state:
             context["loop_state"] = loop_state
         return context
+
+    def _build_qingflow_provider_context(self, status: QingflowAuthStatus) -> dict[str, object]:
+        profile_hints: dict[str, dict[str, object]] = {}
+        if status.token_set and status.mcp_sync.builder_status == McpConnectionStatus.CONNECTED:
+            profile_hints["qingflow-app-builder-mcp"] = {
+                "preferred_profile": "default",
+                "authenticated_profiles": ["default"],
+                "source": "runtime_mcp_sync",
+            }
+        if status.token_set and status.mcp_sync.user_status == McpConnectionStatus.CONNECTED:
+            profile_hints["qingflow-app-user-mcp"] = {
+                "preferred_profile": "default",
+                "authenticated_profiles": ["default"],
+                "source": "runtime_mcp_sync",
+            }
+        return {
+            "connected": status.connected,
+            "token_set": status.token_set,
+            "selected_ws_id": status.selected_ws_id,
+            "selected_ws_name": status.selected_ws_name,
+            "user_name": status.user_name,
+            "user_email": status.user_email,
+            "mcp_sync": status.mcp_sync.model_dump(mode="json"),
+            "profile_hints": profile_hints,
+        }
+
+    @staticmethod
+    def _latest_user_message(messages: list[ChatMessage]) -> str | None:
+        for message in reversed(messages):
+            if message.role == MessageRole.USER:
+                return message.content
+        return None
 
     def get_session(self, session_id: str) -> SessionRecord:
         return self.require_session(session_id).record
@@ -429,16 +477,25 @@ class SessionManager:
     def get_settings(self) -> SettingsPayload:
         settings = self.database.load_settings()
         settings.openai_api_key_set = self.secret_store.has_openai_api_key()
+        settings.openrouter_api_key_set = self.secret_store.has_openrouter_api_key()
         return settings
 
     def update_settings(
         self,
         *,
+        model_provider: str | None = None,
         openai_base_url: str | None = None,
         openai_model: str | None = None,
         openai_api_key: str | None = None,
+        openrouter_base_url: str | None = None,
+        openrouter_model: str | None = None,
+        openrouter_api_key: str | None = None,
+        qingflow_web_origin: str | None = None,
+        qingflow_api_base_url: str | None = None,
     ) -> SettingsPayload:
         settings = self.database.load_settings()
+        if model_provider:
+            settings.model_provider = ModelProvider(model_provider)
         if openai_base_url:
             settings.openai_base_url = openai_base_url.rstrip("/")
         if openai_model:
@@ -446,13 +503,47 @@ class SessionManager:
         if openai_api_key is not None:
             self.secret_store.set_openai_api_key(openai_api_key)
             settings.openai_api_key_set = True
+        if openrouter_base_url:
+            settings.openrouter_base_url = openrouter_base_url.rstrip("/")
+        if openrouter_model:
+            settings.openrouter_model = openrouter_model
+        if openrouter_api_key is not None:
+            self.secret_store.set_openrouter_api_key(openrouter_api_key)
+            settings.openrouter_api_key_set = True
+        if qingflow_web_origin:
+            settings.qingflow_web_origin = qingflow_web_origin.rstrip("/")
+        if qingflow_api_base_url:
+            settings.qingflow_api_base_url = qingflow_api_base_url.rstrip("/")
         self.database.save_settings(settings)
         return settings
 
-    def delete_openai_api_key(self) -> SettingsPayload:
+    async def get_qingflow_status(self) -> QingflowAuthStatus:
+        return await self.qingflow_auth.refresh_status()
+
+    async def connect_qingflow(self, token: str, detected_ws_id: int | None = None) -> QingflowAuthStatus:
+        return await self.qingflow_auth.connect(token, detected_ws_id)
+
+    async def login_qingflow(self, email: str, password: str) -> QingflowAuthStatus:
+        return await self.qingflow_auth.login_with_password(email, password)
+
+    async def select_qingflow_workspace(self, ws_id: int) -> QingflowAuthStatus:
+        return await self.qingflow_auth.select_workspace(ws_id)
+
+    async def logout_qingflow(self) -> QingflowAuthStatus:
+        return await self.qingflow_auth.logout()
+
+    async def sync_qingflow_mcp(self) -> QingflowAuthStatus:
+        return await self.qingflow_auth.sync_mcp()
+
+    def delete_api_key(self, provider: str) -> SettingsPayload:
         settings = self.database.load_settings()
-        self.secret_store.delete_openai_api_key()
-        settings.openai_api_key_set = False
+        normalized_provider = ModelProvider(provider)
+        if normalized_provider == ModelProvider.OPENROUTER:
+            self.secret_store.delete_openrouter_api_key()
+            settings.openrouter_api_key_set = False
+        else:
+            self.secret_store.delete_openai_api_key()
+            settings.openai_api_key_set = False
         self.database.save_settings(settings)
         return settings
 

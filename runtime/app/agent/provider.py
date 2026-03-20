@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.agent.prompts import ACTION_SCHEMA, SYSTEM_PROMPT
 from app.config import AppConfig
-from app.models import AgentAction
+from app.models import AgentAction, ModelProvider, SettingsPayload
 from app.storage import Database, SecretStore
 
 
@@ -48,9 +48,12 @@ class OpenAIProvider(BaseProvider):
         self._secret_store = secret_store
 
     def configuration_error(self) -> str | None:
-        api_key = self._secret_store.get_openai_api_key()
+        settings = self._database.load_settings()
+        provider = settings.model_provider
+        api_key = self._get_api_key(provider)
         if not api_key:
-            return "OpenAI API key is missing or invalid. Open 全局设置 and save a valid API key before sending a task."
+            provider_name = self._provider_display_name(provider)
+            return f"{provider_name} API key is missing or invalid. Open 全局设置 and save a valid API key before sending a task."
         return None
 
     async def next_action(
@@ -58,21 +61,25 @@ class OpenAIProvider(BaseProvider):
         context: dict[str, Any],
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgentAction:
-        api_key = self._secret_store.get_openai_api_key()
-        if not api_key:
-            raise ProviderError(self.configuration_error() or "OpenAI API key is not configured.")
         settings = self._database.load_settings()
-        base_url = (settings.openai_base_url or self._config_default_base_url()).rstrip("/")
+        provider = settings.model_provider
+        api_key = self._get_api_key(provider)
+        if not api_key:
+            raise ProviderError(self.configuration_error() or f"{self._provider_display_name(provider)} API key is not configured.")
+        base_url = self._base_url_for_provider(settings).rstrip("/")
         payload = {
-            "model": settings.openai_model or self._config.openai_model,
+            "model": self._model_for_provider(settings),
             "messages": self._format_messages(context),
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
-        headers = {
+        headers: dict[str, str] = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        if provider == ModelProvider.OPENROUTER:
+            headers["HTTP-Referer"] = "https://qingputer.app"
+            headers["X-Title"] = "Qingputer"
         last_error: ProviderError | None = None
         for attempt in range(1, self._MAX_ATTEMPTS + 1):
             try:
@@ -110,6 +117,82 @@ class OpenAIProvider(BaseProvider):
         payload: dict[str, Any],
         on_chunk: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
+        # Try streaming first for lower TTFT; fall back to non-streaming on failure.
+        try:
+            content = await self._request_action_text_streaming(
+                base_url=base_url, headers=headers, payload=payload, on_chunk=on_chunk,
+            )
+            if content:
+                return content
+        except (httpx.TransportError, httpx.TimeoutException):
+            raise  # let caller handle retries
+        except Exception:
+            pass  # fall through to non-streaming
+
+        return await self._request_action_text_plain(
+            base_url=base_url, headers=headers, payload=payload, on_chunk=on_chunk,
+        )
+
+    async def _request_action_text_streaming(
+        self,
+        *,
+        base_url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
+        stream_payload = {**payload, "stream": True}
+        accumulated = ""
+        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json=stream_payload,
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    raise self._build_api_error(
+                        response.status_code,
+                        error_body.decode("utf-8", errors="replace"),
+                    )
+                async for line in response.aiter_lines():
+                    # Handle both "data: {...}" and "data:{...}" formats
+                    if line.startswith("data: "):
+                        data = line[6:]
+                    elif line.startswith("data:"):
+                        data = line[5:]
+                    else:
+                        continue
+                    if data.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk_obj = json.loads(data)
+                        choices = chunk_obj.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            accumulated += content
+                            if on_chunk:
+                                await on_chunk(content)
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+        content = accumulated.strip()
+        if not content:
+            raise RetryableProviderError("Provider returned an empty response body for the next agent action.")
+        return content
+
+    async def _request_action_text_plain(
+        self,
+        *,
+        base_url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        on_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
+        """Non-streaming fallback."""
         async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT) as client:
             response = await client.post(
                 f"{base_url}/chat/completions",
@@ -122,7 +205,8 @@ class OpenAIProvider(BaseProvider):
             response_payload = response.json()
         except json.JSONDecodeError as exc:
             raise RetryableProviderError(
-                f"Provider returned an invalid JSON envelope: {exc}. Response excerpt: {self._compact_detail(response.text, limit=160)}"
+                f"Provider returned an invalid JSON envelope: {exc}. "
+                f"Response excerpt: {self._compact_detail(response.text, limit=160)}"
             ) from exc
         content = self._extract_text(response_payload).strip()
         if not content:
@@ -187,6 +271,27 @@ class OpenAIProvider(BaseProvider):
 
     def _config_default_base_url(self) -> str:
         return "https://api.openai.com/v1"
+
+    def _get_api_key(self, provider: ModelProvider) -> str | None:
+        if provider == ModelProvider.OPENROUTER:
+            return self._secret_store.get_openrouter_api_key()
+        return self._secret_store.get_openai_api_key()
+
+    def _base_url_for_provider(self, settings: SettingsPayload) -> str:
+        if settings.model_provider == ModelProvider.OPENROUTER:
+            return settings.openrouter_base_url or "https://openrouter.ai/api/v1"
+        return settings.openai_base_url or self._config_default_base_url()
+
+    def _model_for_provider(self, settings: SettingsPayload) -> str:
+        if settings.model_provider == ModelProvider.OPENROUTER:
+            return settings.openrouter_model or self._config.openrouter_model
+        return settings.openai_model or self._config.openai_model
+
+    @staticmethod
+    def _provider_display_name(provider: ModelProvider) -> str:
+        if provider == ModelProvider.OPENROUTER:
+            return "OpenRouter"
+        return "OpenAI"
 
     def _build_api_error(self, status_code: int, body: str) -> ProviderError:
         detail = self._compact_detail(body)
